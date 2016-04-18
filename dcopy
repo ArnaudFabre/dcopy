@@ -1,0 +1,114 @@
+#!/bin/bash
+
+# Date copy
+#
+# Script that copy recursively files containing creation dates to a year/month directory structure
+# New files are directly copied if it does exists
+# if it exists, filename_MD5 is created to allow further checks
+# Logs are in copied.log, already.log and error.log
+# . indicates copy
+# + indicates copy with MD5
+# _ indicates already there
+# error files are copied in tbc folder that must be checked
+#
+# Made for Mac and Linux, tested on Mac only
+
+case $OSTYPE in 
+	darwin*)
+		MD5SUM="md5 -r" 
+		OS="mac"	
+	;;
+	*) 
+		MD5SUM="md5sum"
+		OS="lin"
+	;;
+esac
+
+if [ "$#" -ne 2 ]
+then
+	echo "usage : $0 import_dir final_dir"
+	exit 1;
+fi
+
+if [ ! -d "$1"  ]
+then
+	echo "$1 is not a directory"
+	exit 2;
+fi
+
+if [ ! -d "$2" ]
+then
+	echo "Creating $2"
+	mkdir -p "$2"
+fi
+
+function getDate()
+{
+	if [ "$OS" == "lin" ]
+	then
+		date=`exif -m -t 0x9003 "$@" 2> /dev/null | cut -d':' -f1,2 | tr ':' '/'`
+	else
+		date=`mdls -name kMDItemContentCreationDate "$@" | cut -d' ' -f3 | cut -d'-' -f1,2 | tr '-' '/'`
+	fi
+}
+
+tbc="$2/tbc"
+
+mkdir -p $tbc
+
+copied=0
+error=0
+already=0
+total=0
+
+find -L "$1" -type f | while read f 
+do
+	ts=`date`
+	getDate "$f"
+	if [ -n "$date" ]
+	then
+		mkdir -p "$2/$date"
+		name=`basename "$f"`
+		if [ -e "$2/$date/$name" ]
+		then
+			dmd5=`$MD5SUM "$2/$date/$name" | cut -d' ' -f1`
+			smd5=`$MD5SUM "$f" | cut -d' ' -f1`
+
+			if [ "$smd5" != "$dmd5" ]
+			then
+				echo "[$ts] $f > $2/$date/$dmd5-$name" >> copied.log
+				cp "$f" "$2/$date/$dmd5-$name"
+				echo -n +
+				copied=$((copied + 1))
+			else
+				echo "[$ts] $f > $2/$date/$name" >> already.log
+				echo -n _
+				already=$((already + 1))
+			fi
+		else
+			echo "[$ts] $f > $2/$date" >> copied.log
+			cp "$f" "$2/$date"
+			echo -n .
+			copied=$((copied + 1))
+		fi
+	else
+		echo "[$ts] $f" >> error.log
+		path=`dirname "$f"`
+		mkdir -p "$tbc/$path"
+		cp "$f" "$tbc/$path/"
+		error=$((error + 1))
+	fi
+    
+    echo $copied > .copied
+    echo $error > .error
+    echo $already > .already
+done
+
+copied=`cat .copied`
+error=`cat .error`
+already=`cat .already`
+
+total=$((copied + error + already))
+echo ""
+echo "$total files parsed, $copied copied, $error errors, $already already there"
+
